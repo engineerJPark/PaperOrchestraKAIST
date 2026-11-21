@@ -50,14 +50,22 @@ def main():
         help="Filename of the experimental log within raw_materials. Default: experimental_log.md",
     )
     parser.add_argument(
+        "--backend",
+        choices=["gemini", "claude"],
+        default="gemini",
+        help="LLM backend. 'gemini' uses the Gemini/OpenAI APIs (API keys in .env). "
+        "'claude' runs every LLM call through the Claude Code CLI (`claude -p`), "
+        "so a logged-in Claude subscription is enough.",
+    )
+    parser.add_argument(
         "--writer_model_name",
-        default="gemini-3.1-pro-preview",
-        help="LLM for writer and literature agents.",
+        default=None,
+        help="LLM for writer and literature agents. Default: gemini-3.1-pro-preview (gemini backend) / claude-opus-5-5 (claude backend).",
     )
     parser.add_argument(
         "--reflection_model_name",
-        default="gemini-3.1-pro-preview",
-        help="LLM for reflection agents.",
+        default=None,
+        help="LLM for reflection agents. Default: same as the writer default of the backend.",
     )
     parser.add_argument(
         "--research_cutoff",
@@ -72,13 +80,13 @@ def main():
     )
     parser.add_argument(
         "--plotting_model_name",
-        default="gemini-3.1-pro-preview",
-        help="LLM for the plotting agent.",
+        default=None,
+        help="LLM for the plotting agent. Default: same as the writer default of the backend.",
     )
     parser.add_argument(
         "--image_model_name",
-        default="gemini-3-pro-image-preview",
-        help="Vision model if required by plotting agent.",
+        default=None,
+        help="Image generation model for diagrams. Default: gemini-3-pro-image-preview. Ignored with the claude backend (diagrams are drawn with matplotlib).",
     )
     parser.add_argument(
         "--plotting_max_critic_rounds",
@@ -88,6 +96,34 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.backend == "claude":
+        os.environ["PAPER_ORCHESTRA_BACKEND"] = "claude"
+        default_model = os.getenv("PO_CLAUDE_MODEL", "claude-opus-5-5")
+        default_image_model = default_model
+        if shutil.which(os.getenv("PO_CLAUDE_BIN", "claude")) is None:
+            print("Error: --backend claude requires the Claude Code CLI ('claude') on PATH.")
+            sys.exit(1)
+    else:
+        default_model = "gemini-3.1-pro-preview"
+        default_image_model = "gemini-3-pro-image-preview"
+    for name in ["writer_model_name", "reflection_model_name", "plotting_model_name"]:
+        if getattr(args, name) is None:
+            setattr(args, name, default_model)
+    if args.image_model_name is None:
+        args.image_model_name = default_image_model
+
+    if shutil.which("pdflatex") is None or shutil.which("bibtex") is None:
+        print(
+            "Error: 'pdflatex' and 'bibtex' must be on PATH to compile the paper "
+            "(e.g. export PATH=$HOME/.TinyTeX/bin/x86_64-linux:$PATH)."
+        )
+        sys.exit(1)
+
+    print(
+        f"Backend: {args.backend} | writer: {args.writer_model_name} | "
+        f"reflection: {args.reflection_model_name}"
+    )
 
     if args.research_cutoff is None:
         args.research_cutoff = datetime.now().strftime("%Y-%m")

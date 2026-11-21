@@ -26,6 +26,8 @@ import threading
 
 import dotenv
 
+from utils.claude_cli_utils import call_claude_with_contents, use_claude_backend
+
 dot_file = os.path.join(os.path.dirname(__file__), "../.env")
 dotenv.load_dotenv(dot_file)
 
@@ -166,7 +168,19 @@ def call_gemini_with_contents(
 ):
     """
     Calls the Gemini API (text-only) with retry logic and exponential backoff.
+    With the Claude backend (PAPER_ORCHESTRA_BACKEND=claude or a "claude*" model
+    name), the call is routed to `claude -p` instead.
     """
+    if use_claude_backend(model_name):
+        return call_claude_with_contents(
+            contents=contents,
+            model_name=model_name,
+            max_retries=max_retries,
+            base_interval_sec=base_interval_sec,
+            result_parsing_func=result_parsing_func,
+            generation_configs=generation_configs,
+            check_parsed_response_not_none=check_parsed_response_not_none,
+        )
 
     raw_response = None
     parsed_response = None
@@ -289,6 +303,11 @@ def generate_image_with_gemini(
     """
     Directly calls Gemini for image generation and returns base64.
     """
+    if use_claude_backend(model_name):
+        raise RuntimeError(
+            "Image generation is not available with the Claude backend. "
+            "Diagrams are drawn with matplotlib instead (see generate_figure_visuals)."
+        )
     if generation_configs is None:
         generation_configs = {}
 

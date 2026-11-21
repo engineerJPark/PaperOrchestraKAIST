@@ -76,6 +76,32 @@ python paper_writing_cli.py \
 *   `--writer_model_name`: LLM for writer and literature agents.
 *   `--reflection_model_name`: LLM for reflection agents.
 
+*   `--backend`: `gemini` (default, uses the API keys in `.env`) or `claude` (see below).
+
+### Using Claude via the Claude Code CLI (no API key)
+
+With `--backend claude`, every LLM call is sent to the [Claude Code](https://claude.com/claude-code) CLI (`claude -p`) instead of the Gemini/OpenAI APIs, so a logged-in Claude subscription is enough. Install Claude Code, run `claude` once to log in, then:
+
+```bash
+python paper_writing_cli.py --backend claude \
+  --raw_materials_dir /path_to_your_raw_materials/ \
+  --latex_template_dir templates/kaist-techreport \
+  --output_dir /path_to_your_output_folder/
+```
+
+*   Default model: `claude-opus-5-5` for the writer, reflection and plotting agents. Calls that are hardcoded to Gemini Flash (literature search, title extraction) use `claude-sonnet-5-5`. Override with `--writer_model_name` etc., or with the `PO_CLAUDE_MODEL` / `PO_CLAUDE_FAST_MODEL` environment variables.
+*   Each call runs an isolated `claude -p` process (`--safe-mode`, no tools, own system prompt). Literature search uses Claude's WebSearch tool in place of Google Search grounding; Semantic Scholar verification is unchanged.
+*   Diagrams: Claude has no image generation model, so with `--use_plotting true` diagrams are drawn as matplotlib code instead of with `gemini-3-pro-image-preview`. Statistical plots work as before.
+*   `temperature` cannot be set through the CLI and is ignored.
+*   Optional environment variables: `PO_CLAUDE_EFFORT` (`--effort` level), `PO_CLAUDE_TIMEOUT` (seconds per call, default 1800), `PO_CLAUDE_MAX_OUTPUT_TOKENS` (default 64000), `PO_CLAUDE_BIN` (path to `claude`).
+*   A full paper takes many calls with large contexts, so it uses a noticeable share of your subscription's usage limits.
+
+`pdflatex` and `bibtex` must be on `PATH` for either backend.
+
+### Literature verification sources
+
+The literature agent verifies every candidate paper (title, authors, abstract, year) before citing it. Lookups go to Semantic Scholar first; if that request fails (for example HTTP 429, which is common without `SEMANTIC_SCHOLAR_API_KEY`), the same title is looked up on OpenAlex and then on arXiv. Without keys, OpenAlex allows a shared daily budget of about 100 searches per IP; set `OPENALEX_API_KEY` (free) for more. arXiv is queried at most once every 3 seconds, as its API terms require.
+
 ### Interactive Demo
 
 We provide an interactive Streamlit demo for the paper generation pipeline. For instructions on how to run and use it, please refer to the [README.md](frontend/README.md) in the `frontend` directory.

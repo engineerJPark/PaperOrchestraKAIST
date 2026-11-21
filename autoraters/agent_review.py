@@ -17,6 +17,7 @@ import json
 import numpy as np
 
 from utils.gemini_utils import call_gemini_with_text_prompt
+from utils.claude_cli_utils import use_claude_backend
 
 # --- AGENTREVIEW SPECIFIC CONSTANTS (From role_descriptions.py) ---
 
@@ -109,6 +110,27 @@ For the "Decision" field, don't use Weak Accept, Borderline Accept, Borderline R
 This JSON will be automatically parsed, so ensure the format is precise."""
 
 
+# Claude variant: Claude's safeguards flag the request to write out "intuitions and
+# reasoning" in a THOUGHT section as reasoning extraction (`reasoning_extraction`),
+# which blocks the request. Only the JSON is parsed, so the THOUGHT section is dropped.
+_THOUGHT_FORMAT = """THOUGHT:
+<THOUGHT>
+
+"""
+_THOUGHT_DESCRIPTION = AGENTREVIEW_INSTRUCTIONS[
+    AGENTREVIEW_INSTRUCTIONS.index("In <THOUGHT>") : AGENTREVIEW_INSTRUCTIONS.index("In <JSON>")
+]
+AGENTREVIEW_INSTRUCTIONS_NO_THOUGHT = AGENTREVIEW_INSTRUCTIONS.replace(
+    _THOUGHT_FORMAT, ""
+).replace(_THOUGHT_DESCRIPTION, "")
+
+
+def _instructions_for_model(review_instruction_form, model_name):
+    if use_claude_backend(model_name) and review_instruction_form == AGENTREVIEW_INSTRUCTIONS:
+        return AGENTREVIEW_INSTRUCTIONS_NO_THOUGHT
+    return review_instruction_form
+
+
 def perform_review_agentreview(
     text,
     model_name,
@@ -123,7 +145,7 @@ def perform_review_agentreview(
         reviewer_system_prompt = get_agentreview_system_prompt(
             is_knowledgeable=True, is_responsible=True, is_benign=True
         )
-    base_prompt = review_instruction_form
+    base_prompt = _instructions_for_model(review_instruction_form, model_name)
     base_prompt += f"""
 Here is the paper you are asked to review:
 ```
@@ -196,7 +218,7 @@ Review {i + 1}/{len(reviews)}:
 {json.dumps(r)}
 ```
 """
-    base_prompt = AGENTREVIEW_INSTRUCTIONS + review_text
+    base_prompt = _instructions_for_model(AGENTREVIEW_INSTRUCTIONS, model) + review_text
     response = call_gemini_with_text_prompt(
         prompt=base_prompt,
         model_name=model,

@@ -26,7 +26,7 @@ from methods.prompts.literature_review_agent import (
     literature_review_agent_writter_prompt,
 )
 from utils.gemini_utils import call_gemini_with_contents, parse_gemini_latex_results
-from utils.scholar_utils import s2_title_search
+from utils.scholar_utils import latex_safe_text, s2_title_search
 
 
 class CandidatePaper(BaseModel):
@@ -551,13 +551,14 @@ class HybridLiteratureAgent:
             seen_keys.add(unique_key)
 
             author_str = " and ".join(p.authors) if p.authors else "Unknown"
+            author_str = latex_safe_text(author_str)
             entry_type = "article" if p.journal else "inproceedings"
 
-            entry = f"@{entry_type}{{{p.citation_key},\n  title={{{p.title}}},\n  author={{{author_str}}},\n"
+            entry = f"@{entry_type}{{{p.citation_key},\n  title={{{latex_safe_text(p.title)}}},\n  author={{{author_str}}},\n"
             if p.journal:
-                entry += f"  journal={{{p.journal}}},\n"
+                entry += f"  journal={{{latex_safe_text(p.journal)}}},\n"
             else:
-                entry += f"  booktitle={{{p.venue}}},\n"
+                entry += f"  booktitle={{{latex_safe_text(p.venue)}}},\n"
             entry += f"  year={{{p.year}}}"
             if p.volume:
                 entry += f",\n  volume={{{p.volume}}}"

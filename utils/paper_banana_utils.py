@@ -27,6 +27,7 @@ from utils.gemini_utils import (
     call_gemini_with_contents,
     generate_image_with_gemini,
 )
+from utils.claude_cli_utils import use_claude_backend
 
 cur_dir = os.path.dirname(os.path.realpath(__file__))
 PB_DIR = os.path.join(cur_dir, "../../PaperBanana")
@@ -196,6 +197,7 @@ Output ONLY the final polished Detailed Description. Do not include any conversa
 # --- VISUALIZER ---
 DIAGRAM_VISUALIZER_AGENT_SYSTEM_PROMPT = """You are an expert scientific diagram illustrator. Generate high-quality scientific diagrams based on user requests."""
 PLOT_VISUALIZER_AGENT_SYSTEM_PROMPT = """You are an expert statistical plot illustrator. Write code to generate high-quality statistical plots based on user requests."""
+DIAGRAM_CODE_VISUALIZER_AGENT_SYSTEM_PROMPT = """You are an expert scientific diagram illustrator. Write matplotlib code to draw high-quality scientific diagrams based on user requests."""
 
 # --- CRITIC ---
 DIAGRAM_CRITIC_AGENT_SYSTEM_PROMPT = """
@@ -667,6 +669,29 @@ def generate_figure_visuals(
         code_text = response_dict["parsed_response"]
         base64_img = execute_plot_code_worker(code_text)
         return base64_img
+    elif use_claude_backend(image_model_name):
+        # Claude has no image generation model: draw the diagram with matplotlib instead.
+        prompt_text = (
+            "Use python matplotlib to draw a clean scientific diagram (e.g., a method "
+            "overview or pipeline figure) based on the following detailed description: "
+            f"{figure_description}\n"
+            "Draw it with boxes (matplotlib.patches.FancyBboxPatch), arrows "
+            "(FancyArrowPatch or ax.annotate), and short text labels on a blank canvas "
+            f"with aspect ratio {aspect_ratio}. Turn the axes off, keep all text inside "
+            "its box and never overlapping, use a consistent soft color palette, and do "
+            "not include a figure title. Do not call plt.show() or plt.savefig().\n"
+            "Only provide the code without any explanations. Code:"
+        )
+        contents = [
+            types.Part.from_text(text=DIAGRAM_CODE_VISUALIZER_AGENT_SYSTEM_PROMPT),
+            types.Part.from_text(text=prompt_text),
+        ]
+        response_dict = call_gemini_with_contents(
+            contents=contents,
+            model_name=model_name,
+            result_parsing_func=identity_parse,
+        )
+        return execute_plot_code_worker(response_dict["parsed_response"])
     else:
         # Prompt for diagram image generation
         prompt_text = f"Render an image based on the following detailed description: {figure_description}\n Note that do not include figure titles in the image. Diagram: "
