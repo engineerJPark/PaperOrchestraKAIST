@@ -58,6 +58,12 @@ def main():
         "so a logged-in Claude subscription is enough.",
     )
     parser.add_argument(
+        "--references_filename",
+        default="reference.md",
+        help="BibTeX file (inside raw_materials) listing papers that MUST be cited. "
+        "Their citation keys and BibTeX entries are used as given. Optional. Default: reference.md",
+    )
+    parser.add_argument(
         "--writer_model_name",
         default=None,
         help="LLM for writer and literature agents. Default: gemini-3.1-pro-preview (gemini backend) / claude-opus-5-5 (claude backend).",
@@ -188,6 +194,7 @@ def main():
             plotting_model_name=args.plotting_model_name,
             image_model_name=args.image_model_name,
             research_cutoff=args.research_cutoff,
+            references_filename=args.references_filename,
             plotting_max_critic_rounds=args.plotting_max_critic_rounds,
         )
     else:
@@ -205,6 +212,7 @@ def main():
             writer_model_name=args.writer_model_name,
             reflection_model_name=args.reflection_model_name,
             research_cutoff=args.research_cutoff,
+            references_filename=args.references_filename,
         )
 
 

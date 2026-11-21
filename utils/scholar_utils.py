@@ -71,6 +71,14 @@ def latex_safe_text(text: Optional[str]) -> Optional[str]:
     return "".join(out)
 
 
+def latex_escape_bib_field(text: Optional[str]) -> Optional[str]:
+    """Escapes LaTeX special characters in metadata from search APIs
+    (e.g. "Accident Analysis & Prevention"). Already-escaped ones are kept."""
+    if not text:
+        return text
+    return re.sub(r"(?<!\\)([&%#_])", r"\\\1", latex_safe_text(text))
+
+
 # --- SEMANTIC SCHOLAR UTILS ---
 #
 # Lookups go to Semantic Scholar first. If it fails (HTTP 429 rate limit, other

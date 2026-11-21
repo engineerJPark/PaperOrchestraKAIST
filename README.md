@@ -77,6 +77,7 @@ python paper_writing_cli.py \
 *   `--reflection_model_name`: LLM for reflection agents.
 
 *   `--backend`: `gemini` (default, uses the API keys in `.env`) or `claude` (see below).
+*   `--references_filename`: BibTeX file inside `raw_materials` with papers that **must** be cited (default: `reference.md`, optional). The entries are added to the bibliography as written, keep their citation keys (so the idea document can refer to them by key), skip the research cutoff filter, and the outline and literature agents are told to cite every one of them.
 
 ### Using Claude via the Claude Code CLI (no API key)
 

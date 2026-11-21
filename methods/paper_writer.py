@@ -38,6 +38,7 @@ def write_single_paper(
     writer_model_name: str = "gemini-3.1-pro-preview",
     reflection_model_name: str = "gemini-3.1-pro-preview",
     research_cutoff: str = "2024-11",
+    references_filename: str = "reference.md",
 ):
     latex_writeup_dir = osp.join(base_dir, "latex_writeup")
     pdf_file = osp.join(base_dir, "final_paper.pdf")
@@ -88,6 +89,12 @@ def write_single_paper(
                 experimental_log_file_path
             ), f"No experimental log file detected at '{experimental_log_file_path}'!"
 
+            must_cite_path = osp.join(materials_dir, references_filename)
+            if not osp.exists(must_cite_path):
+                must_cite_path = None
+            else:
+                print(f" >> Must-cite references: {must_cite_path}")
+
             ###############################################################################################
             # Step 1: Call outline agent
             outline_agent = OutlineAgent(
@@ -100,6 +107,7 @@ def write_single_paper(
                 latex_template_file=latex_template_path,
                 conference_guidelines_file=guidelines_path,
                 output_filepath=outline_file_path,
+                must_cite_file=must_cite_path,
             )
 
             ###############################################################################################
@@ -113,6 +121,7 @@ def write_single_paper(
                 output_dir=literature_agent_output_dir,
                 model_name=writer_model_name,
                 max_workers=3,
+                must_cite_path=must_cite_path,
             )
             literature_agent.run(
                 outline_path=outline_file_path,

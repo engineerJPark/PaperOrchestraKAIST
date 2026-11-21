@@ -26,7 +26,19 @@ from methods.prompts.literature_review_agent import (
     literature_review_agent_writter_prompt,
 )
 from utils.gemini_utils import call_gemini_with_contents, parse_gemini_latex_results
-from utils.scholar_utils import latex_safe_text, s2_title_search
+from utils.scholar_utils import latex_escape_bib_field, latex_safe_text, s2_title_search
+from utils.bibtex_utils import (
+    bibtex_authors_to_names,
+    parse_bibtex_entries,
+    strip_braces,
+)
+
+# Entry types plainnat knows; anything else (e.g. @software) is emitted as @misc.
+PLAINNAT_ENTRY_TYPES = {
+    "article", "book", "booklet", "inbook", "incollection", "inproceedings",
+    "conference", "manual", "mastersthesis", "misc", "phdthesis",
+    "proceedings", "techreport", "unpublished",
+}
 
 
 class CandidatePaper(BaseModel):
@@ -54,6 +66,8 @@ class PaperData(BaseModel):
     volume: Optional[str] = None
     pages: Optional[str] = None
     publication_date: Optional[str] = None
+    # Set for user-provided must-cite papers: emitted verbatim into references.bib.
+    raw_bibtex: Optional[str] = None
 
 
 class WriterOutput(BaseModel):
@@ -71,8 +85,11 @@ class HybridLiteratureAgent:
         output_dir: str,
         model_name: str = "gemini-3.1-pro-preview",
         max_workers: int = 5,
+        must_cite_path: Optional[str] = None,
     ):
         self.output_dir = output_dir
+        self.must_cite_path = must_cite_path
+        self.must_cite_keys: List[str] = []
         os.makedirs(output_dir, exist_ok=True)
 
         self.model_name = model_name
@@ -112,6 +129,10 @@ class HybridLiteratureAgent:
         outline_output_path = f"{self.output_dir}/outline_v1.json"
         unique_papers_registry: Dict[str, PaperData] = {}
         processed_tasks = set()
+
+        # --- PHASE 0: USER-PROVIDED MUST-CITE PAPERS ---
+        if self.must_cite_path:
+            self._register_must_cite_papers(unique_papers_registry)
 
         # --- PHASE 1: DISCOVERY & RETRIEVAL ---
         self._safe_print(f"📚 Phase 1: Analyzing Plan & Executing Search Tasks...")
@@ -488,6 +509,8 @@ class HybridLiteratureAgent:
             "citation_checklist": paper_keys,
             "collected_papers": papers_payload,
         }
+        if self.must_cite_keys:
+            context_payload["must_cite_keys"] = self.must_cite_keys
 
         writer_system_prompt = literature_review_agent_writter_prompt.format(
             paper_count=len(papers),
@@ -496,6 +519,13 @@ class HybridLiteratureAgent:
         )
 
         user_prompt = "Generate the LaTeX for Introduction and Related Work sections."
+        if self.must_cite_keys:
+            user_prompt += (
+                "\n\nREQUIRED CITATIONS: the authors require every key in 'must_cite_keys' "
+                "to be cited at least once in the Introduction or Related Work, each in a "
+                "place where it is relevant. Use these keys exactly as given: "
+                + ", ".join(self.must_cite_keys)
+            )
         response_dict = call_gemini_with_contents(
             model_name=self.model_name,
             contents=[user_prompt, json.dumps(context_payload)],
@@ -539,26 +569,31 @@ class HybridLiteratureAgent:
 
     def _generate_bibtex(self, papers: List[PaperData]) -> str:
         entries = []
-        seen_keys = set()
+        # BibTeX keys are case-insensitive. User-provided keys are reserved first
+        # so generated keys never take them.
+        seen_keys = {p.citation_key.lower() for p in papers if p.raw_bibtex}
         for p in papers:
+            if p.raw_bibtex:
+                entries.append(latex_safe_text(p.raw_bibtex))
+                continue
             base_key = p.citation_key
             unique_key = base_key
             suffix = "a"
-            while unique_key in seen_keys:
+            while unique_key.lower() in seen_keys:
                 unique_key = f"{base_key}{suffix}"
                 suffix = chr(ord(suffix) + 1)
             p.citation_key = unique_key
-            seen_keys.add(unique_key)
+            seen_keys.add(unique_key.lower())
 
             author_str = " and ".join(p.authors) if p.authors else "Unknown"
             author_str = latex_safe_text(author_str)
             entry_type = "article" if p.journal else "inproceedings"
 
-            entry = f"@{entry_type}{{{p.citation_key},\n  title={{{latex_safe_text(p.title)}}},\n  author={{{author_str}}},\n"
+            entry = f"@{entry_type}{{{p.citation_key},\n  title={{{latex_escape_bib_field(p.title)}}},\n  author={{{author_str}}},\n"
             if p.journal:
-                entry += f"  journal={{{latex_safe_text(p.journal)}}},\n"
+                entry += f"  journal={{{latex_escape_bib_field(p.journal)}}},\n"
             else:
-                entry += f"  booktitle={{{latex_safe_text(p.venue)}}},\n"
+                entry += f"  booktitle={{{latex_escape_bib_field(p.venue)}}},\n"
             entry += f"  year={{{p.year}}}"
             if p.volume:
                 entry += f",\n  volume={{{p.volume}}}"
@@ -603,6 +638,68 @@ class HybridLiteratureAgent:
             else:
                 loaded[name] = ""
         return loaded
+
+    def _register_must_cite_papers(self, registry: Dict[str, "PaperData"]):
+        """Adds the user's must-cite BibTeX entries to the registry.
+
+        They keep the user's citation keys and BibTeX, skip the cutoff-date
+        filter, and take precedence over papers found by search (same title).
+        Abstracts are looked up (Semantic Scholar -> OpenAlex -> arXiv) so the
+        writer agents know what each paper is about.
+        """
+        with open(self.must_cite_path, "r", encoding="utf-8") as f:
+            entries = parse_bibtex_entries(f.read())
+        self._safe_print(
+            f"📌 Phase 0: Registering {len(entries)} must-cite papers from "
+            f"{os.path.basename(self.must_cite_path)}..."
+        )
+        for e in entries:
+            fields = e["fields"]
+            title = strip_braces(fields.get("title", ""))
+            if not title:
+                self._safe_print(f"      ⚠️ Skipping must-cite entry without title: {e['key']}")
+                continue
+            year_str = re.sub(r"[^0-9]", "", fields.get("year", ""))[:4]
+            year = int(year_str) if year_str else datetime.datetime.now().year
+
+            abstract = ""
+            try:
+                found = s2_title_search(title, year, cutoff_date=None)
+                if found:
+                    abstract = found.get("abstract") or ""
+            except Exception:
+                pass
+            if not abstract:
+                abstract = (
+                    f"(Abstract unavailable.) {title}. "
+                    "Required citation provided by the authors."
+                )
+            elif len(abstract) > 1500:
+                abstract = abstract[:1500] + "... [Truncated]"
+
+            raw = e["raw"]
+            if e["type"] not in PLAINNAT_ENTRY_TYPES:
+                raw = re.sub(r"^@\w+", "@misc", raw, count=1)
+
+            venue = strip_braces(
+                fields.get("journal") or fields.get("booktitle") or fields.get("url") or "Unknown"
+            )
+            paper = PaperData(
+                citation_key=e["key"],
+                title=title,
+                authors=bibtex_authors_to_names(fields.get("author", "")),
+                venue=venue,
+                year=year,
+                abstract=abstract,
+                citation_count=0,
+                found_in_section="Must-cite (provided by the authors)",
+                reason="Required citation provided by the authors.",
+                raw_bibtex=raw,
+            )
+            registry[self._normalize_title(title)] = paper
+            self.must_cite_keys.append(e["key"])
+            status = "with abstract" if not abstract.startswith("(Abstract unavailable") else "no abstract found"
+            self._safe_print(f"      -> 📌 Must-cite: {e['key']} ({status})")
 
     def _normalize_title(self, title):
         return re.sub(r"[^a-z0-9]", "", title.lower())

@@ -14,6 +14,7 @@
 
 from utils.common_utils import load_md_file
 from utils.gemini_utils import call_gemini_with_contents
+from utils.bibtex_utils import parse_bibtex_entries, strip_braces
 import json
 from google.genai import types  # type: ignore
 
@@ -34,6 +35,7 @@ class OutlineAgent:
         latex_template_file: str,
         conference_guidelines_file: str,
         output_filepath: str = None,
+        must_cite_file: str = None,
     ):
         contents = [
             types.Part.from_text(
@@ -48,6 +50,21 @@ class OutlineAgent:
             ),
             types.Part.from_text(text=load_md_file(conference_guidelines_file)),
         ]
+        if must_cite_file:
+            entries = parse_bibtex_entries(load_md_file(must_cite_file))
+            listing = "\n".join(
+                f"- {e['key']}: {strip_braces(e['fields'].get('title', ''))} "
+                f"({e['fields'].get('year', 'n.d.')})"
+                for e in entries
+            )
+            contents.append(
+                types.Part.from_text(
+                    text="'must_cite_references' (REQUIRED: the authors require every paper "
+                    "below to be cited. Plan where each one is cited, using these exact "
+                    "citation keys; they are already in the bibliography, so do not add "
+                    "search tasks for them):\n" + listing
+                )
+            )
         response_dict = call_gemini_with_contents(
             contents=contents,
             model_name=self.model_name,
