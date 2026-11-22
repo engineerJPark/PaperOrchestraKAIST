@@ -64,6 +64,13 @@ def main():
         "Their citation keys and BibTeX entries are used as given. Optional. Default: reference.md",
     )
     parser.add_argument(
+        "--korean_version",
+        type=lambda x: (str(x).lower() in ["true", "1", "yes"]),
+        default=True,
+        help="Also write a Korean translation (latex_ko/, final_paper_ko.pdf) with the writer model. "
+        "Needs xelatex, the xetexko package and a Korean font. Default: true",
+    )
+    parser.add_argument(
         "--writer_model_name",
         default=None,
         help="LLM for writer and literature agents. Default: gemini-3.1-pro-preview (gemini backend) / claude-opus-5-5 (claude backend).",
@@ -195,6 +202,7 @@ def main():
             image_model_name=args.image_model_name,
             research_cutoff=args.research_cutoff,
             references_filename=args.references_filename,
+            korean_version=args.korean_version,
             plotting_max_critic_rounds=args.plotting_max_critic_rounds,
         )
     else:
@@ -213,6 +221,7 @@ def main():
             reflection_model_name=args.reflection_model_name,
             research_cutoff=args.research_cutoff,
             references_filename=args.references_filename,
+            korean_version=args.korean_version,
         )
 
 

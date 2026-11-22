@@ -29,6 +29,7 @@ from methods.agents.content_refinement_agent import ContentRefinementAgent
 from methods.agents.plotting_agent import PlottingAgent
 
 from utils.latex_split_utils import write_split_latex_project
+from utils.korean_version_utils import write_korean_version
 from utils.common_utils import (
     create_log_folder,
 )
@@ -46,6 +47,7 @@ def write_single_paper(
     research_cutoff: str = "2024-11",
     references_filename: str = "reference.md",
     plotting_max_critic_rounds: int = 3,
+    korean_version: bool = True,
 ):
     latex_writeup_dir = osp.join(base_dir, "latex_writeup")
     pdf_file = osp.join(base_dir, "final_paper.pdf")
@@ -262,16 +264,31 @@ def write_single_paper(
             print(" >> Final PDF saved to:\n", final_pdf_path)
 
             # Also write the paper as main.tex + sec/<section>.tex for hand editing.
+            split_dir = osp.join(base_dir, "latex")
             try:
-                write_split_latex_project(
+                split_ok = write_split_latex_project(
                     tex_path=osp.splitext(content_refinment_agent_output_pdf_path)[0] + ".tex",
-                    out_dir=osp.join(base_dir, "latex"),
+                    out_dir=split_dir,
                     template_dir=latex_template_dir,
                     reference_pdf=final_pdf_path,
                 )
             except Exception:
+                split_ok = False
                 print(" >> ⚠️ Could not split the paper into section files:")
                 print(traceback.format_exc())
+
+            # Korean translation of the split project (latex_ko/, final_paper_ko.pdf).
+            if korean_version and split_ok:
+                try:
+                    write_korean_version(
+                        split_dir=split_dir,
+                        out_dir=osp.join(base_dir, "latex_ko"),
+                        model_name=writer_model_name,
+                        pdf_output_path=osp.join(base_dir, "final_paper_ko.pdf"),
+                    )
+                except Exception:
+                    print(" >> ⚠️ Could not write the Korean version:")
+                    print(traceback.format_exc())
 
             succeed = True
             return True
@@ -345,6 +362,7 @@ def process_paper_task(
                 image_model_name=image_model_name,
                 plotting_max_critic_rounds=plotting_max_critic_rounds,
                 research_cutoff=research_cutoff,
+                korean_version=False,  # batch runs: English only
             )
 
             if success:

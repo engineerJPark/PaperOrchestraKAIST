@@ -166,7 +166,7 @@ def get_paper_references_from_pdf(
     return None
 
 
-def compile_latex(cwd, pdf_file, texfile_name="template", timeout=30):
+def compile_latex(cwd, pdf_file, texfile_name="template", timeout=30, engine="pdflatex"):
     import os, shutil, subprocess, traceback, rich
 
     source_pdf = os.path.join(cwd, f"{texfile_name}.pdf")
@@ -178,10 +178,10 @@ def compile_latex(cwd, pdf_file, texfile_name="template", timeout=30):
         env.pop(var, None)
 
     commands = [
-        ["pdflatex", "-interaction=nonstopmode", f"{texfile_name}.tex"],
+        [engine, "-interaction=nonstopmode", f"{texfile_name}.tex"],
         ["bibtex", texfile_name],
-        ["pdflatex", "-interaction=nonstopmode", f"{texfile_name}.tex"],
-        ["pdflatex", "-interaction=nonstopmode", f"{texfile_name}.tex"],
+        [engine, "-interaction=nonstopmode", f"{texfile_name}.tex"],
+        [engine, "-interaction=nonstopmode", f"{texfile_name}.tex"],
     ]
 
     execution_logs = []

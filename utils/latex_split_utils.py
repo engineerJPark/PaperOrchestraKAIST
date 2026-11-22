@@ -47,6 +47,81 @@ _BOUNDARY_RE = re.compile(
 _TEMPLATE_SKIP = {"template.tex", "guidelines.md"}
 
 
+# --- one sentence per line ---------------------------------------------------
+#
+# LLM-written LaTeX puts a whole paragraph on one line. For editing and diffs,
+# each sentence goes on its own line. A single newline is a space in LaTeX, so
+# the PDF does not change (paragraphs are still separated only by blank lines).
+
+_SENTENCE_END_RE = re.compile(
+    r"(?<!\\)[.!?][)\]}'\"\u2019\u201d]*[ \t]+(?=[A-Z0-9\uac00-\ud7a3\\(`\"\u201c\u2018\[])"
+)
+_HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
+_ABBREVIATIONS = {
+    "e.g", "i.e", "al", "etc", "vs", "cf", "fig", "figs", "eq", "eqs", "sec", "secs",
+    "tab", "no", "approx", "resp", "dr", "mr", "ms", "st", "ref", "refs", "ch", "app",
+    "vol", "pp", "ca", "viz", "w.r.t", "a.k.a", "incl", "esp", "def", "thm", "lem",
+}
+# Environments whose lines are left untouched.
+_NO_WRAP_ENVS = (
+    "verbatim", "lstlisting", "minted", "equation", "align", "gather", "multline",
+    "eqnarray", "displaymath", "math", "tabular", "tabularx", "array", "tikzpicture",
+)
+_ENV_RE = re.compile(r"\\(begin|end)\{(" + "|".join(_NO_WRAP_ENVS) + r")\*?\}")
+
+
+def _comment_start(line: str) -> int:
+    """Index of the first unescaped %, or len(line)."""
+    for m in re.finditer(r"%", line):
+        backslashes = len(line[: m.start()]) - len(line[: m.start()].rstrip("\\"))
+        if backslashes % 2 == 0:
+            return m.start()
+    return len(line)
+
+
+def _split_sentences(code: str) -> List[str]:
+    pieces, last = [], 0
+    for m in _SENTENCE_END_RE.finditer(code):
+        word = re.search(r"([A-Za-z.]+)$", code[: m.start() + 1].rstrip(".!?)]}'\"\u2019\u201d"))
+        token = word.group(1).lower().strip(".") if word else ""
+        if token in _ABBREVIATIONS or re.fullmatch(r"[a-z]", token or "_"):
+            continue  # "e.g. X", "et al. X", initials "A. Author"
+        next_char = code[m.end()] if m.end() < len(code) else ""
+        if next_char.isdigit() and not _HANGUL_RE.match(code[m.start() - 1 : m.start()]):
+            continue  # "Sec. 3", "Table 2. 3 ..." are ambiguous; only "...다. 3단계" splits
+        end = m.end() - len(m.group(0)) + len(m.group(0).rstrip(" \t"))
+        pieces.append(code[last:end])
+        last = m.end()
+    pieces.append(code[last:])
+    return pieces
+
+
+def one_sentence_per_line(tex: str) -> str:
+    out, skip_depth, display_math = [], 0, False
+    for line in tex.split("\n"):
+        stripped = line.strip()
+        for kind, _ in _ENV_RE.findall(line[: _comment_start(line)]):
+            skip_depth += 1 if kind == "begin" else -1
+        if stripped.startswith("\\["):
+            display_math = True
+        if skip_depth > 0 or display_math or stripped.startswith("%") or not stripped:
+            if "\\]" in line:
+                display_math = False
+            out.append(line)
+            continue
+        cut = _comment_start(line)
+        code, comment = line[:cut], line[cut:]
+        indent = code[: len(code) - len(code.lstrip())]
+        pieces = _split_sentences(code)
+        if len(pieces) == 1:
+            out.append(line)
+            continue
+        out.append(pieces[0])
+        out.extend(indent + p for p in pieces[1:-1])
+        out.append(indent + pieces[-1] + comment)
+    return "\n".join(out)
+
+
 def _is_blank_or_comment(line: str) -> bool:
     s = line.strip()
     return not s or s.startswith("%")
@@ -229,7 +304,7 @@ def write_split_latex_project(
         f.write(main_tex)
     for name, content in sections:
         with open(osp.join(out_dir, "sec", f"{name}.tex"), "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(one_sentence_per_line(content))
     print(f" >> Split LaTeX project ({len(sections)} files in sec/) written to: {out_dir}")
 
     if not compile_check:
