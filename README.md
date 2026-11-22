@@ -77,6 +77,7 @@ python paper_writing_cli.py \
 *   `--reflection_model_name`: LLM for reflection agents.
 
 *   `--backend`: `gemini` (default, uses the API keys in `.env`) or `claude` (see below).
+*   Output: `final_paper.pdf`, and `latex/` with the same paper split for hand editing (`main.tex` + `sec/0_abstract.tex`, `sec/1_introduction.tex`, …, appendix sections as `sec/A_*.tex`), ready to compile with `pdflatex main`. The split version is compiled and checked against the final PDF; the single-file source stays in `content_refinement_workdir/final_refined_paper.tex`. `latex_writeup/` is the pipeline's working copy of the template and the first draft (before refinement), not the final paper.
 *   `--references_filename`: BibTeX file inside `raw_materials` with papers that **must** be cited (default: `reference.md`, optional). The entries are added to the bibliography as written, keep their citation keys (so the idea document can refer to them by key), skip the research cutoff filter, and the outline and literature agents are told to cite every one of them.
 
 ### Using Claude via the Claude Code CLI (no API key)

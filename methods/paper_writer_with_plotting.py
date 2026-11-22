@@ -28,6 +28,7 @@ from methods.agents.section_writing_agent import SectionWritingAgent
 from methods.agents.content_refinement_agent import ContentRefinementAgent
 from methods.agents.plotting_agent import PlottingAgent
 
+from utils.latex_split_utils import write_split_latex_project
 from utils.common_utils import (
     create_log_folder,
 )
@@ -259,6 +260,18 @@ def write_single_paper(
             )
             shutil.copy(content_refinment_agent_output_pdf_path, final_pdf_path)
             print(" >> Final PDF saved to:\n", final_pdf_path)
+
+            # Also write the paper as main.tex + sec/<section>.tex for hand editing.
+            try:
+                write_split_latex_project(
+                    tex_path=osp.splitext(content_refinment_agent_output_pdf_path)[0] + ".tex",
+                    out_dir=osp.join(base_dir, "latex"),
+                    template_dir=latex_template_dir,
+                    reference_pdf=final_pdf_path,
+                )
+            except Exception:
+                print(" >> ⚠️ Could not split the paper into section files:")
+                print(traceback.format_exc())
 
             succeed = True
             return True
