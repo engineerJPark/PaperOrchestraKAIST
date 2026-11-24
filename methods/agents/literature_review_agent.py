@@ -26,7 +26,12 @@ from methods.prompts.literature_review_agent import (
     literature_review_agent_writter_prompt,
 )
 from utils.gemini_utils import call_gemini_with_contents, parse_gemini_latex_results
-from utils.scholar_utils import latex_escape_bib_field, latex_safe_text, s2_title_search
+from utils.scholar_utils import (
+    find_arxiv_id,
+    latex_escape_bib_field,
+    latex_safe_text,
+    s2_title_search,
+)
 from utils.bibtex_utils import (
     bibtex_authors_to_names,
     parse_bibtex_entries,
@@ -86,9 +91,30 @@ class HybridLiteratureAgent:
         model_name: str = "gemini-3.1-pro-preview",
         max_workers: int = 5,
         must_cite_path: Optional[str] = None,
+        citation_mode: str = "curated",
+        suggest_references: bool = False,
+        suggestions_path: Optional[str] = None,
     ):
+        """
+        citation_mode:
+          "curated" (default): only the user's BibTeX in `must_cite_path` is
+              cited. Papers found by the literature search are never put into
+              the bibliography; they are written to `suggestions_path` as arXiv
+              abs links (IDs checked against the arXiv API) so the user can copy
+              the real BibTeX into reference.md. This prevents hallucinated
+              references. The search runs only when there are no user references
+              yet, or when `suggest_references` is True.
+          "auto": the original PaperOrchestra behavior; search results are
+              cited with BibTeX generated from Semantic Scholar/OpenAlex/arXiv
+              metadata, together with the user's references.
+        """
+        if citation_mode not in ("curated", "auto"):
+            raise ValueError(f"citation_mode must be 'curated' or 'auto', got {citation_mode!r}")
         self.output_dir = output_dir
         self.must_cite_path = must_cite_path
+        self.citation_mode = citation_mode
+        self.suggest_references = suggest_references
+        self.suggestions_path = suggestions_path or os.path.join(output_dir, "reference_raw.md")
         self.must_cite_keys: List[str] = []
         os.makedirs(output_dir, exist_ok=True)
 
@@ -127,28 +153,57 @@ class HybridLiteratureAgent:
             outline = json.load(f)
 
         outline_output_path = f"{self.output_dir}/outline_v1.json"
-        unique_papers_registry: Dict[str, PaperData] = {}
+        user_registry: Dict[str, PaperData] = {}
         processed_tasks = set()
 
-        # --- PHASE 0: USER-PROVIDED MUST-CITE PAPERS ---
+        # --- PHASE 0: USER-PROVIDED REFERENCES ---
         if self.must_cite_path:
-            self._register_must_cite_papers(unique_papers_registry)
+            self._register_must_cite_papers(user_registry)
+
+        curated = self.citation_mode == "curated"
+        run_search = (not curated) or self.suggest_references or not user_registry
 
         # --- PHASE 1: DISCOVERY & RETRIEVAL ---
-        self._safe_print(f"📚 Phase 1: Analyzing Plan & Executing Search Tasks...")
+        # Seeded with the user's papers so the search does not suggest them again.
+        search_registry: Dict[str, PaperData] = dict(user_registry)
+        if run_search:
+            self._safe_print(f"📚 Phase 1: Analyzing Plan & Executing Search Tasks...")
+            search_tasks = self._collect_search_tasks(outline)
+            self._safe_print(
+                f"    -> Identified {len(search_tasks)} distinct search tasks."
+            )
+            self._execute_tasks_in_parallel(
+                search_tasks, outline, search_registry, processed_tasks, cutoff_date
+            )
+            found = [p for p in search_registry.values() if not p.raw_bibtex]
+            self._safe_print(
+                f"\n✨ Literature search found {len(found)} papers besides the user's references."
+            )
+            self._write_reference_suggestions(found)
+        else:
+            self._safe_print(
+                "📚 Phase 1 skipped: citing only the user's references "
+                "(pass --suggest_references true to also search for more)."
+            )
 
-        search_tasks = self._collect_search_tasks(outline)
-        self._safe_print(
-            f"    -> Identified {len(search_tasks)} distinct search tasks."
-        )
-
-        self._execute_tasks_in_parallel(
-            search_tasks, outline, unique_papers_registry, processed_tasks, cutoff_date
-        )
-
-        self._safe_print(
-            f"\n✨ Final Count: {len(unique_papers_registry)} unique enriched papers retrieved."
-        )
+        if curated:
+            unique_papers_registry = user_registry
+            if not unique_papers_registry:
+                self._safe_print(
+                    "\n🛑 No references to cite: the references file is missing or empty.\n"
+                    f"   Candidate papers were written to {self.suggestions_path}.\n"
+                    "   Copy the BibTeX of the papers you want from their arXiv pages into\n"
+                    "   raw_materials/reference.md, then run the pipeline again."
+                )
+                return False
+            self._safe_print(
+                f"📌 Citing only the {len(unique_papers_registry)} references provided by the authors."
+            )
+        else:
+            unique_papers_registry = search_registry
+            self._safe_print(
+                f"\n✨ Final Count: {len(unique_papers_registry)} unique enriched papers retrieved."
+            )
 
         # --- PHASE 2: ASSET GENERATION ---
         final_papers_list = list(unique_papers_registry.values())
@@ -176,6 +231,59 @@ class HybridLiteratureAgent:
         )
         self._safe_print(
             f"✅ Done! Literature Review Outputs saved to {self.output_dir}/"
+        )
+        return True
+
+    def _write_reference_suggestions(self, papers: List[PaperData]):
+        """Writes the papers found by search as arXiv abs links, grouped by section.
+
+        No BibTeX is written: the user copies the real BibTeX from arXiv into
+        reference.md. Each ID comes from the arXiv API and is kept only if the
+        arXiv title matches; papers without such a match are listed by title.
+        """
+        self._safe_print(
+            f"🔗 Looking up arXiv IDs for {len(papers)} papers (one request per 3 s)..."
+        )
+        by_section: Dict[str, List] = {}
+        not_on_arxiv = []
+        for p in papers:
+            arxiv_id = None
+            try:
+                arxiv_id = find_arxiv_id(p.title)
+            except Exception as e:
+                self._safe_print(f"      ⚠️ arXiv lookup error for '{p.title}': {e}")
+            if arxiv_id:
+                by_section.setdefault(p.found_in_section, []).append((arxiv_id, p))
+            else:
+                not_on_arxiv.append(p)
+
+        n_arxiv = sum(len(v) for v in by_section.values())
+        lines = [
+            "# Reference suggestions",
+            "",
+            "Papers found by the literature search. Each arXiv ID was taken from the arXiv API",
+            "and kept only when the arXiv title matches the paper's title.",
+            "To cite a paper, copy its BibTeX from the arXiv page into raw_materials/reference.md.",
+            "In the default citation mode (curated), only papers in reference.md are cited.",
+            "",
+            f"## On arXiv ({n_arxiv})",
+        ]
+        for section, items in by_section.items():
+            lines += ["", f"### {section}", ""]
+            for arxiv_id, p in items:
+                lines.append(f"- https://arxiv.org/abs/{arxiv_id} — {p.title} ({p.year})")
+        lines += ["", f"## Not found on arXiv ({len(not_on_arxiv)})", ""]
+        lines.append("Look these up yourself (publisher page, DOI) before citing them.")
+        lines.append("")
+        for p in not_on_arxiv:
+            venue = f"{p.venue}, " if p.venue and p.venue != "arXiv" else ""
+            lines.append(f"- {p.title} — {venue}{p.year}")
+
+        os.makedirs(os.path.dirname(os.path.abspath(self.suggestions_path)), exist_ok=True)
+        with open(self.suggestions_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        self._safe_print(
+            f"      -> {n_arxiv} arXiv links, {len(not_on_arxiv)} without arXiv: {self.suggestions_path}"
         )
 
     def _execute_tasks_in_parallel(

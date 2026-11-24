@@ -107,3 +107,14 @@ def bibtex_authors_to_names(author_field: str) -> List[str]:
             part = f"{first} {last}".strip()
         names.append(part)
     return names
+
+
+_CITE_RE = re.compile(r"\\[cC]ite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]*)\}")
+
+
+def find_undefined_citations(tex: str, bib_text: str) -> List[str]:
+    """Citation keys used in `tex` that have no entry in `bib_text` (sorted)."""
+    tex = re.sub(r"(?<!\\)%.*", "", tex)
+    bib_keys = {e["key"] for e in parse_bibtex_entries(bib_text)}
+    used = {k.strip() for group in _CITE_RE.findall(tex) for k in group.split(",") if k.strip()}
+    return sorted(used - bib_keys)

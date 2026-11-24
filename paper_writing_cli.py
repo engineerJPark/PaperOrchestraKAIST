@@ -60,8 +60,27 @@ def main():
     parser.add_argument(
         "--references_filename",
         default="reference.md",
-        help="BibTeX file (inside raw_materials) listing papers that MUST be cited. "
-        "Their citation keys and BibTeX entries are used as given. Optional. Default: reference.md",
+        help="BibTeX file (inside raw_materials) with the papers to cite, copied by the authors "
+        "from the papers' arXiv/publisher pages. Keys and entries are used as given. "
+        "Default: reference.md",
+    )
+    parser.add_argument(
+        "--citation_mode",
+        choices=["curated", "auto"],
+        default="curated",
+        help="curated (default): cite ONLY the papers in the references file, to prevent "
+        "hallucinated references. Papers found by the literature search are written to "
+        "<output_dir>/reference_raw.md as verified arXiv abs links; copy the BibTeX of the "
+        "ones you want into the references file. If the references file is missing or empty, "
+        "the run stops after writing reference_raw.md. "
+        "auto: original behavior; cite search results with generated BibTeX.",
+    )
+    parser.add_argument(
+        "--suggest_references",
+        type=lambda x: (str(x).lower() in ["true", "1", "yes"]),
+        default=False,
+        help="curated mode: run the literature search and write reference_raw.md even when "
+        "the references file already has entries. Default: false",
     )
     parser.add_argument(
         "--korean_version",
@@ -203,6 +222,8 @@ def main():
             research_cutoff=args.research_cutoff,
             references_filename=args.references_filename,
             korean_version=args.korean_version,
+            citation_mode=args.citation_mode,
+            suggest_references=args.suggest_references,
             plotting_max_critic_rounds=args.plotting_max_critic_rounds,
         )
     else:
@@ -222,6 +243,8 @@ def main():
             research_cutoff=args.research_cutoff,
             references_filename=args.references_filename,
             korean_version=args.korean_version,
+            citation_mode=args.citation_mode,
+            suggest_references=args.suggest_references,
         )
 
 

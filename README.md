@@ -8,7 +8,8 @@ This fork is not an official Google product and is not affiliated with the origi
 
 - **KAIST tech report template** (`templates/kaist-techreport`): the KAIST AI report class (`paper.cls`), macros, and the logo. It also includes writing guidelines tuned for the class: the abstract goes in the preamble, citations use natbib author-year, the main text is 8–12 pages, and figures are single-column.
 - **Claude backend** (`--backend claude`): every LLM call runs through the Claude Code CLI (`claude -p`), so a logged-in Claude subscription is enough and no API key is needed.
-- **Must-cite references** (`raw_materials/reference.md`): BibTeX entries that the paper must cite. They are added to the bibliography as written and keep their citation keys, and the outline and literature agents are told to cite every one.
+- **Reference hallucination guard (curated citations)**: by default the paper cites **only** the BibTeX entries you put in `raw_materials/reference.md`. The literature agent no longer writes BibTeX for the papers it finds. It lists them in `reference_raw.md` as arXiv abs links instead, and you copy the BibTeX of the ones you want from arXiv into `reference.md` yourself. Each arXiv ID comes from the arXiv API and is kept only if the arXiv title matches the paper's title, so a similarly named paper is not linked by mistake (e.g. Qwen2 for Qwen2.5-VL). After the final PDF is built, any `\cite` key missing from the bibliography is reported. See [Citation workflow](#citation-workflow). `--citation_mode auto` restores the original behavior.
+- **User references** (`raw_materials/reference.md`): BibTeX entries are added to the bibliography as written and keep their citation keys, and the outline and literature agents are told to cite every one.
 - **Robust literature verification**: if Semantic Scholar fails (for example HTTP 429 without an API key), lookups fall back to OpenAlex and then arXiv. Metadata is cleaned so that it compiles with pdflatex: unsupported Unicode is replaced and `&`, `%`, `#`, `_` are escaped.
 - **Split LaTeX output** (`latex/`): the final paper is also written as `main.tex` plus one file per section under `sec/`, with one sentence per line for easier editing and diffs.
 - **Korean version** (`latex_ko/`, `final_paper_ko.pdf`): a Korean translation of the final paper. It uses a shared terminology glossary, checks that the LaTeX structure survived translation, and compiles with xelatex.
@@ -45,7 +46,7 @@ Put the following files in a single directory and pass it with `--raw_materials_
 |---|---|
 | `idea_sparse.md` | Research idea: problem, method, and planned experiments. Change the name with `--idea_filename`. |
 | `experimental_log.md` | Experimental setup and results. If no experiments have been run, say so explicitly, so that no numbers are invented. |
-| `reference.md` | Optional. BibTeX entries that must be cited. Change the name with `--references_filename`. |
+| `reference.md` | BibTeX entries of the papers to cite, copied from the papers' arXiv or publisher pages. In the default `curated` mode these are the **only** papers cited. Change the name with `--references_filename`. |
 | `figures/` | Optional. Figures to include. |
 
 ## Usage
@@ -65,7 +66,9 @@ You can also use `./paper_writing_cli.sh`; edit the variables at the top of the 
 - `--latex_template_dir` (required): LaTeX template, e.g. `templates/kaist-techreport`. `templates/cvpr2025` and `templates/iclr2025` from the original repository still work.
 - `--output_dir`: output directory. If omitted, a timestamped folder is created.
 - `--backend`: `gemini` (default; uses the API keys in `.env`) or `claude`.
-- `--references_filename`: BibTeX file in the raw materials with papers that must be cited. Default: `reference.md`. Optional.
+- `--references_filename`: BibTeX file in the raw materials with the papers to cite. Default: `reference.md`.
+- `--citation_mode`: `curated` (default) cites only the references file; `auto` is the original behavior, which cites search results with generated BibTeX. Batch runs use `auto`.
+- `--suggest_references`: in `curated` mode, run the literature search and write `reference_raw.md` even when the references file already has entries. Default: `false`.
 - `--korean_version`: also write the Korean translation. Default: `true`. Pass `false` to skip it.
 - `--use_plotting`: generate figures from code with the plotting agent. Default: `false`.
 - `--writer_model_name`, `--reflection_model_name`, `--plotting_model_name`: model overrides. The defaults depend on the backend.
@@ -76,6 +79,7 @@ You can also use `./paper_writing_cli.sh`; edit the variables at the top of the 
 | Path | Content |
 |---|---|
 | `final_paper.pdf` | Final paper |
+| `reference_raw.md` | Papers found by the literature search, as verified arXiv abs links; papers not on arXiv are listed by title. Written when the search runs. |
 | `latex/` | Final paper as an editable project: `main.tex`, `sec/0_abstract.tex`, `sec/1_introduction.tex`, …, and appendix sections as `sec/A_*.tex`. Build with `pdflatex main && bibtex main && pdflatex main && pdflatex main`. |
 | `final_paper_ko.pdf`, `latex_ko/` | Korean version. Build with `xelatex` instead of `pdflatex`. `latex_ko/glossary.md` lists the term translations used. |
 | `content_refinement_workdir/` | Review and refinement rounds, peer reviews, and the single-file final source `final_refined_paper.tex` |
@@ -85,6 +89,16 @@ You can also use `./paper_writing_cli.sh`; edit the variables at the top of the 
 Both split projects, `latex/` and `latex_ko/`, are compiled during the run. The English project is also compared with `final_paper.pdf` to confirm the text is identical. If a step fails, the run still finishes with a warning, and the single-file source remains available.
 
 The Korean version is a machine translation. Review it before using it. A section whose LaTeX structure (citations, labels, references, math) did not survive translation is left in English, and a warning is printed.
+
+### Citation workflow
+
+LLM-written bibliographies can contain papers that do not exist, or real titles with wrong authors, years, or venues. To prevent this, references are curated by a person:
+
+1. **First run** with no `reference.md`, or an empty one. The pipeline writes the outline, runs the literature search, and writes `<output_dir>/reference_raw.md`: the papers it found, grouped by the section they were found for, as `https://arxiv.org/abs/<id>` links. Then it stops.
+2. **Pick papers.** Open the arXiv links, copy the BibTeX of the papers you want (the "Export BibTeX Citation" link on each arXiv page), and paste it into `raw_materials/reference.md`. For papers not on arXiv, copy the BibTeX from the publisher or DOI page.
+3. **Run again.** Only the entries in `reference.md` are cited, with their keys and fields exactly as you wrote them. The search is skipped; pass `--suggest_references true` to also get fresh suggestions in `reference_raw.md`.
+
+The writing agents may cite only keys in the bibliography. If the final paper still has a `\cite` key without an entry, it is printed as a warning.
 
 ### Claude backend
 
@@ -110,7 +124,7 @@ The Streamlit demo from the original repository is in `frontend/`; see [frontend
 ## Project structure
 
 - `methods/`: pipeline and agents (outline, literature review, section writing, content refinement, plotting).
-- `utils/`: LLM backends (`gemini_utils.py`, `claude_cli_utils.py`), literature lookup (`scholar_utils.py`), LaTeX compilation (`pdf_utils.py`), section splitting (`latex_split_utils.py`), and the Korean version (`korean_version_utils.py`).
+- `utils/`: LLM backends (`gemini_utils.py`, `claude_cli_utils.py`), literature lookup and arXiv ID verification (`scholar_utils.py`), BibTeX parsing and the citation check (`bibtex_utils.py`), LaTeX compilation (`pdf_utils.py`), section splitting (`latex_split_utils.py`), and the Korean version (`korean_version_utils.py`).
 - `templates/`: LaTeX templates. To add a template, create a folder with `template.tex`, `guidelines.md`, and the class and style files.
 - `autoraters/`: automatic reviewers used during refinement and evaluation.
 

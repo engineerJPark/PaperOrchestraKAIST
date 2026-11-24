@@ -26,6 +26,7 @@ from methods.agents.section_writing_agent import SectionWritingAgent
 from methods.agents.content_refinement_agent import ContentRefinementAgent
 
 from utils.latex_split_utils import write_split_latex_project
+from utils.bibtex_utils import find_undefined_citations
 from utils.korean_version_utils import write_korean_version
 from utils.common_utils import (
     create_log_folder,
@@ -42,6 +43,8 @@ def write_single_paper(
     research_cutoff: str = "2024-11",
     references_filename: str = "reference.md",
     korean_version: bool = True,
+    citation_mode: str = "curated",
+    suggest_references: bool = False,
 ):
     latex_writeup_dir = osp.join(base_dir, "latex_writeup")
     pdf_file = osp.join(base_dir, "final_paper.pdf")
@@ -125,11 +128,15 @@ def write_single_paper(
                 model_name=writer_model_name,
                 max_workers=3,
                 must_cite_path=must_cite_path,
+                citation_mode=citation_mode,
+                suggest_references=suggest_references,
+                suggestions_path=osp.join(base_dir, "reference_raw.md"),
             )
-            literature_agent.run(
+            if not literature_agent.run(
                 outline_path=outline_file_path,
                 cutoff_date=research_cutoff,
-            )
+            ):
+                return False  # no references to cite yet; see reference_raw.md
             shutil.copy(
                 osp.join(literature_agent_output_dir, "outline_v1.json"),
                 outline_file_path,
@@ -197,6 +204,18 @@ def write_single_paper(
             )
             shutil.copy(content_refinment_agent_output_pdf_path, final_pdf_path)
             print(" >> Final PDF saved to:\n", final_pdf_path)
+
+            # Every citation must resolve to the bibliography (in curated mode:
+            # the user's reference.md). Unknown keys would print as "?".
+            final_tex_path = osp.splitext(content_refinment_agent_output_pdf_path)[0] + ".tex"
+            final_bib_path = osp.join(osp.dirname(final_tex_path), "references.bib")
+            try:
+                with open(final_tex_path, encoding="utf-8") as f_tex, open(final_bib_path, encoding="utf-8") as f_bib:
+                    undefined = find_undefined_citations(f_tex.read(), f_bib.read())
+                if undefined:
+                    print(f" !! WARNING: {len(undefined)} citation key(s) not in references.bib: {', '.join(undefined)}")
+            except OSError as e:
+                print(f" !! WARNING: citation check skipped: {e}")
 
             # Also write the paper as main.tex + sec/<section>.tex for hand editing.
             split_dir = osp.join(base_dir, "latex")
@@ -292,6 +311,7 @@ def process_paper_task(
                 writer_model_name=writer_model_name,
                 research_cutoff=research_cutoff,
                 korean_version=False,  # batch runs: English only
+                citation_mode="auto",  # batch runs: original benchmark behavior
             )
 
             if success:

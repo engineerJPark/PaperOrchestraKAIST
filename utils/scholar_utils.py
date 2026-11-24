@@ -280,6 +280,76 @@ def _fetch_arxiv_candidates(title_query: str) -> Optional[List[Dict]]:
     return results
 
 
+def _norm_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", title or "").lower())
+
+
+def _arxiv_query(search_query: str) -> Optional[str]:
+    """Runs one rate-limited arXiv API query; returns the Atom XML or None."""
+    global _arxiv_last_call
+    for attempt in range(3):
+        with _arxiv_lock:
+            wait = ARXIV_MIN_INTERVAL_SEC - (time.time() - _arxiv_last_call)
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                rsp = requests.get(
+                    "https://export.arxiv.org/api/query",
+                    params={"search_query": search_query, "max_results": 5},
+                    timeout=20,
+                )
+            except requests.RequestException:
+                rsp = None
+            finally:
+                _arxiv_last_call = time.time()
+        if rsp is not None and rsp.status_code == 200:
+            return rsp.text
+        time.sleep(5 * (attempt + 1))
+    return None
+
+
+def find_arxiv_id(title: str, min_ratio: int = 97) -> Optional[str]:
+    """Returns the arXiv ID (no version) of the paper titled `title`, or None.
+
+    The ID is taken from the arXiv API itself and accepted only when the arXiv
+    title matches `title` almost exactly (normalized fuzz ratio >= min_ratio),
+    so a similarly named paper (e.g. "Qwen2" for "Qwen2.5-VL") is rejected.
+    Tries an exact title phrase first, then all title words.
+    """
+    title = (title or "").replace("\u2019", "'")
+    phrase = re.sub(r"\s+", " ", re.sub(r"[^\w\s.'\-]", " ", title)).strip()
+    words = [
+        re.sub(r"[^\w]", "", w) for w in re.sub(r"[^\w\s']", " ", title).split() if "'" not in w
+    ]
+    words = [w for w in words if len(w) > 2]
+    if not phrase:
+        return None
+    queries = [f'ti:"{phrase}"']
+    if words:
+        queries.append(" AND ".join(f"ti:{w}" for w in words[:12]))
+
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    target = _norm_title(title)
+    failed = True
+    for query in queries:
+        xml = _arxiv_query(query)
+        if xml is None:
+            continue
+        failed = False
+        best_id, best_ratio = None, 0
+        for entry in ET.fromstring(xml).findall("atom:entry", ns):
+            entry_title = " ".join((entry.findtext("atom:title", "", ns) or "").split())
+            entry_id = (entry.findtext("atom:id", "", ns) or "").split("/abs/")[-1]
+            ratio = fuzz.ratio(target, _norm_title(entry_title))
+            if entry_id and ratio > best_ratio:
+                best_id, best_ratio = re.sub(r"v\d+$", "", entry_id), ratio
+        if best_ratio >= min_ratio:
+            return best_id
+    if failed:
+        print(f"      ⚠️ arXiv lookup failed for '{title}'")
+    return None
+
+
 _SOURCES = [
     ("Semantic Scholar", _fetch_s2_candidates),
     ("OpenAlex", _fetch_openalex_candidates),
